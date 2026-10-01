@@ -3,12 +3,72 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>PokemonDLE!</title>
+    <title>Pokédle Web Game</title>
+    <style>
+        body { font-family: Arial, sans-serif; background-color: #f4f4f9; text-align: center; padding: 20px; }
+        .container { max-width: 700px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        .input-box { margin-bottom: 20px; }
+        input[type="text"] { padding: 10px; width: 60%; font-size: 16px; border: 1px solid #ccc; border-radius: 4px; }
+        button { padding: 10px 20px; font-size: 16px; border: none; border-radius: 4px; cursor: pointer; background: #007bff; color: white; }
+        button.reset { background: #dc3545; }
+        .message { font-weight: bold; margin: 15px 0; font-size: 18px; color: #333; }
+        table { width: 100%; border-collapse: collapse; margin-top: 20px; }
+        th, td { border: 1px solid #ddd; padding: 12px; text-align: center; }
+        th { background-color: #f2f2f2; }
+        .correct { background-color: #28a745 !important; color: white; font-weight: bold; }
+        .incorrect { background-color: #dc3545 !important; color: white; font-weight: bold; }
+        .type-pill { display: inline-block; padding: 3px 8px; margin: 2px; border-radius: 12px; font-size: 12px; }
+    </style>
 </head>
 <body>
 
-    <h1>Hello, World!</h1>
-    <p>This is a basic HTML webpage skeleton.</p>
+<div class="container">
+    <h1>POKÉDLE!</h1>
+    
+    {% if message %}
+        <p class="message">{{ message }}</p>
+    {% endif %}
+
+    <form method="POST" class="input-box">
+        {% if not game_over %}
+            <input type="text" name="guess" placeholder="Guess a Pokémon..." required autocomplete="off" autofocus>
+            <button type="submit">Guess</button>
+        {% else %}
+            <button type="submit" name="reset" value="true" class="reset">Play Again</button>
+        {% endif %}
+    </form>
+
+    {% if guesses %}
+        <table>
+            <thead>
+                <tr>
+                    <th>Name</th>
+                    <th>Height</th>
+                    <th>Weight</th>
+                    <th>Base XP</th>
+                    <th>Types</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for g in guesses|reverse %}
+                <tr>
+                    <td>{{ g.name }}</td>
+                    <td class="{{ 'correct' if g.height_match else 'incorrect' }}">{{ g.height }}m</td>
+                    <td class="{{ 'correct' if g.weight_match else 'incorrect' }}">{{ g.weight }}kg</td>
+                    <td class="{{ 'correct' if g.xp_match else 'incorrect' }}">{{ g.base_experience }}</td>
+                    <td>
+                        {% for t in g.types %}
+                            <span class="type-pill {{ 'correct' if t.match == 'correct' else 'incorrect' }}">
+                                {{ t.name }}
+                            </span>
+                        {% endfor %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    {% endif %}
+</div>
 
 </body>
 </html>

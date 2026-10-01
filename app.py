@@ -1,86 +1,124 @@
 import random
-from colorama import init, Back, Style
 import asyncio
-from typing import Any
+from flask import Flask, render_template, request, session, redirect, url_for
 import aiohttp
 
 MAXCONCURRENT = 25
-BASEURL =  "https://pokeapi.co/api/v2/pokemon?limit=1351"
+BASEURL = "https://pokeapi.co/api/v2/pokemon?limit=1351"
 
-async def fetch_json(session, url, semaphore):
+app = Flask(__name__)
+# Secret key required to use Flask sessions securely
+app.secret_key = "super_secret_pokemon_key"
+
+# Global database to cache API responses across requests
+pokemon_db = {}
+
+async def fetch_json(session_aio, url, semaphore):
     async with semaphore:
-        try: 
-            async with session.get(url) as response:
+        try:
+            async with session_aio.get(url) as response:
                 response.raise_for_status()
                 return await response.json()
-        except aiohttp.ClientError as e: 
+        except aiohttp.ClientError as e:
             print(f"Error caught fetching {url}: {e}")
             return None
-        
+
 async def load_data():
+    global pokemon_db
+    print("Fetching Pokemon API Data...")
     semaphore = asyncio.Semaphore(MAXCONCURRENT)
-
-    async with aiohttp.ClientSession() as session:
-        indexdata = await fetch_json(session, BASEURL, semaphore)
-        if not indexdata or "results" not in indexdata:
-            print("Failed to return.")
-            return []
-
-        tasks = [fetch_json(session, item["url"], semaphore) for item in indexdata["results"]]
+    async with aiohttp.ClientSession() as session_aio:
+        indexdata = await fetch_json(session_aio, BASEURL, semaphore)
+        if not indexdata or 'results' not in indexdata:
+            print("Failed to return base data.")
+            return
+        
+        tasks = [fetch_json(session_aio, item['url'], semaphore) for item in indexdata['results']]
         results = await asyncio.gather(*tasks)
-        pokemon_db = {}
+        
         for detail in results:
             if detail:
-                name = detail.get("name", "").title()
+                name = detail.get('name', '').title()
                 if name:
                     pokemon_db[name] = {
-                        "name": detail.get("name"),
-                        "height": detail.get("height"),
-                        "weight": detail.get("weight"),
-                        "base_experience": detail.get("base_experience"),
-                        "types": [t["type"]["name"] for t in detail.get("types", [])]
+                        'name': name,
+                        'height': detail.get('height', 0) / 10,
+                        'weight': detail.get('weight', 0) / 10,
+                        'base_experience': detail.get('base_experience', 0),
+                        'types': [t['type']['name'].title() for t in detail.get('types', [])]
                     }
-        return pokemon_db
-    
-def poke_random(pokemon_db):
-    random_pokemon, pokeinfo = random.choice(list(pokemon_db.items()))
-    print("-----POKEDLE!-----")
-    while True:
-        guess = input("Guess a pokemon: ").strip().title()
+    print(f"Loaded {len(pokemon_db)} Pokemon into database.")
 
-        if guess not in pokemon_db:
-            print("Loser! Try again!")
-            continue
-        guessed = pokemon_db[guess]
-        types = guessed["types"]
-        types_correct = pokeinfo["types"]
-        if guess == random_pokemon.title():
-             print(f"Correct! \n")
-             print(f"Name: {Back.GREEN}{random_pokemon.title()}{Style.RESET_ALL}, Height:  {Back.GREEN}{guessed["height"]}{Style.RESET_ALL}, "
-                f"Weight: {Back.GREEN}{guessed["weight"]}{Style.RESET_ALL}, Base XP: {Back.GREEN}{guessed["base_experience"]}{Style.RESET_ALL}, "
-                f"Types: {Back.GREEN}{", ".join(types)}{Style.RESET_ALL}")
-             break
-        elif guess in pokemon_db:
-            print("Not quite!")
-            p_height_final = f"{Back.GREEN}{guessed["height"]/10}m{Style.RESET_ALL}" if guessed["height"] == pokeinfo["height"] else f"{Back.RED}{guessed["height"]/10}m{Style.RESET_ALL}"
-            p_weight_final = f"{Back.GREEN}{guessed["weight"]/10}kg{Style.RESET_ALL}" if guessed["weight"] == pokeinfo["weight"] else f"{Back.RED}{guessed["weight"]/10}kg{Style.RESET_ALL}"
-            p_xp_final = f"{Back.GREEN}{guessed["base_experience"]}{Style.RESET_ALL}" if guessed["base_experience"] == pokeinfo["base_experience"] else f"{Back.RED}{guessed["base_experience"]}{Style.RESET_ALL}"
-            colored_types = []
-            for type_name in types:
-                    if type_name in types_correct:
-                        colored_types.append(f"{Back.GREEN}{type_name.title()}{Style.RESET_ALL}")
+@app.route('/', methods=['GET', 'POST'])
+def index():
+    # If the database hasn't loaded yet, run the async population function
+    if not pokemon_db:
+        asyncio.run(load_data())
+
+    # Initialize a new game session if it doesn't exist
+    if 'target' not in session:
+        random_pokemon, pokeinfo = random.choice(list(pokemon_db.items()))
+        session['target'] = random_pokemon
+        session['guesses'] = []
+        session['game_over'] = False
+
+    message = None
+    target_info = pokemon_db[session['target']]
+
+    if request.method == 'POST':
+        # Check if user clicked the "Reset" button
+        if 'reset' in request.form:
+            session.pop('target', None)
+            return redirect(url_for('index'))
+
+        # Process user guess
+        guess = request.form.get('guess', '').strip().title()
+
+        if not session['game_over']:
+            if guess not in pokemon_db:
+                message = "Not a valid Pokémon! Try again!"
+            elif any(g['name'] == guess for g in session['guesses']):
+                message = "You already guessed that one!"
+            else:
+                guessed_info = pokemon_db[guess]
+                
+                # Check metrics against target Pokémon
+                height_match = guessed_info['height'] == target_info['height']
+                weight_match = guessed_info['weight'] == target_info['weight']
+                xp_match = guessed_info['base_experience'] == target_info['base_experience']
+                
+                # Type logic matching colorama's strict color structure
+                colored_types = []
+                for type_name in guessed_info['types']:
+                    if type_name in target_info['types']:
+                        colored_types.append({'name': type_name, 'match': 'correct'})
                     else:
-                        colored_types.append(f"{Back.RED}{type_name.title()}{Style.RESET_ALL}")
-            p_types_final = ", ".join(colored_types)
-            print(f"Name: {guess}, Height: {p_height_final}, Weight: {p_weight_final}, Base Experience: {p_xp_final}, Types: {p_types_final}")
-            continue
+                        colored_types.append({'name': type_name, 'match': 'incorrect'})
 
-async def main():
-    print("Fetching Pokemon API Data...")
-    pokemon_db = await load_data()
+                # Build evaluated guess structure
+                guess_result = {
+                    'name': guess,
+                    'height': guessed_info['height'],
+                    'height_match': height_match,
+                    'weight': guessed_info['weight'],
+                    'weight_match': weight_match,
+                    'base_experience': guessed_info['base_experience'],
+                    'xp_match': xp_match,
+                    'types': colored_types
+                }
 
-    if pokemon_db:
-        poke_random(pokemon_db)
+                # Save history into session cookies (session modification flag required for lists)
+                guesses_list = session['guesses']
+                guesses_list.append(guess_result)
+                session['guesses'] = guesses_list
 
-if __name__ == "__main__":
-    asyncio.run(main())
+                if guess == session['target']:
+                    message = "Correct! You won!"
+                    session['game_over'] = True
+
+    return render_template('index.html', guesses=session['guesses'], message=message, game_over=session['game_over'])
+
+if __name__ == '__main__':
+    # Initialize the cache synchronously on first startup
+    asyncio.run(load_data())
+    app.run(debug=True)
